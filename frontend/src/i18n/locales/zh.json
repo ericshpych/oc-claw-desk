@@ -219,7 +219,11 @@
     "charNameExists": "角色名已存在，桌宠动画将追加到该角色",
     "saveFailed": "保存失败:",
     "largeActions": "大看板娘动画",
-    "videoFormat": "支持 MOV/MP4/WebM/GIF 格式"
+    "videoFormat": "支持 MOV/MP4/WebM/GIF 格式",
+    "hermesUrl": "Gateway 地址",
+    "hermesToken": "Token (可选)",
+    "hermesTokenPlaceholder": "如无需认证请留空",
+    "testConnection": "测试连接"
   },
 
   "createChar": {

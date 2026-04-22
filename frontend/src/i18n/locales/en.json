@@ -219,7 +219,11 @@
     "charNameExists": "Character name already exists. Pet animation will be appended.",
     "saveFailed": "Save failed:",
     "largeActions": "Large Mascot Animation",
-    "videoFormat": "Supports MOV/MP4/WebM/GIF format"
+    "videoFormat": "Supports MOV/MP4/WebM/GIF format",
+    "hermesUrl": "Gateway URL",
+    "hermesToken": "Token (optional)",
+    "hermesTokenPlaceholder": "Leave empty if no auth required",
+    "testConnection": "Test Connection"
   },
 
   "createChar": {

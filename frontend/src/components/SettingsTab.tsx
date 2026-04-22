@@ -278,6 +278,12 @@ function ConnectionRow({ conn, onUpdate, onDelete, disableLocal }: { conn: OcCon
 export function SettingsTab({ notifySound, onChangeNotifySound, waitingSound, onToggleWaitingSound, soundEnabled, onToggleSoundEnabled, codexSoundEnabled, onToggleCodexSoundEnabled, cursorSoundEnabled, onToggleCursorSoundEnabled, autoCloseCompletion, onToggleAutoCloseCompletion, autoExpandOnTask, onToggleAutoExpandOnTask, islandBg, onChangeIslandBg, bgPos, onChangeBgPos, panelMaxHeight, onChangePanelMaxHeight, hoverDelay, onChangeHoverDelay }: { notifySound: 'default' | 'manbo'; onChangeNotifySound: (v: 'default' | 'manbo') => void; waitingSound: boolean; onToggleWaitingSound: (v: boolean) => void; soundEnabled: boolean; onToggleSoundEnabled: (v: boolean) => void; codexSoundEnabled: boolean; onToggleCodexSoundEnabled: (v: boolean) => void; cursorSoundEnabled: boolean; onToggleCursorSoundEnabled: (v: boolean) => void; autoCloseCompletion: boolean; onToggleAutoCloseCompletion: (v: boolean) => void; autoExpandOnTask: boolean; onToggleAutoExpandOnTask: (v: boolean) => void; islandBg: string; onChangeIslandBg: (v: string) => void; bgPos: { x: number; y: number }; onChangeBgPos: (v: { x: number; y: number }) => void; panelMaxHeight: number; onChangePanelMaxHeight: (v: number) => void; hoverDelay: number; onChangeHoverDelay: (v: number) => void }) {
   const { t, i18n } = useTranslation()
   const [connections, setConnections] = useState<OcConnection[]>([])
+  // Hermes connection state
+  const [hermesUrl, setHermesUrl] = useState('http://127.0.0.1:8643')
+  const [hermesToken, setHermesToken] = useState('')
+  const [hermesEnabled, setHermesEnabled] = useState(true)
+  const [hermesTestResult, setHermesTestResult] = useState<'success' | 'error' | null>(null)
+  const [hermesTestMsg, setHermesTestMsg] = useState('')
   const [enableClaudeCode, setEnableClaudeCode] = useState(true)
   const [hookStatus, setHookStatus] = useState('')
   const [enableCodex, setEnableCodex] = useState(true)
@@ -342,6 +348,13 @@ export function SettingsTab({ notifySound, onChangeNotifySound, waitingSound, on
       if (typeof cod === 'boolean') setEnableCodex(cod)
       const cur = await store.get('enable_cursor')
       if (typeof cur === 'boolean') setEnableCursor(cur)
+      // Load Hermes settings
+      const hermesUrlVal = await store.get('hermes_url')
+      if (typeof hermesUrlVal === 'string') setHermesUrl(hermesUrlVal)
+      const hermesTokenVal = await store.get('hermes_token')
+      if (typeof hermesTokenVal === 'string') setHermesToken(hermesTokenVal)
+      const hermesEnabledVal = await store.get('hermes_enabled')
+      if (typeof hermesEnabledVal === 'boolean') setHermesEnabled(hermesEnabledVal)
     })()
     void checkForUpdate()
     if (showIslandBackgroundSettings) {
@@ -526,6 +539,73 @@ export function SettingsTab({ notifySound, onChangeNotifySound, waitingSound, on
               />
             ))
           )}
+        </div>
+      </section>
+
+      {/* Hermes */}
+      <section className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-medium text-white">Hermes</h2>
+          <Toggle checked={hermesEnabled} onChange={(val) => {
+            setHermesEnabled(val)
+            getStore().then(store => { store.set('hermes_enabled', val); store.save() })
+          }} />
+        </div>
+        <div className="bg-[#0f0f0f] border border-white/5 rounded-2xl overflow-hidden">
+          <div className="p-4 flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
+              <label className="text-xs text-white/50">{t('settings.hermesUrl', 'Gateway URL')}</label>
+              <input
+                type="text"
+                value={hermesUrl}
+                onChange={(e) => {
+                  setHermesUrl(e.target.value)
+                  getStore().then(store => { store.set('hermes_url', e.target.value); store.save() })
+                }}
+                placeholder="http://127.0.0.1:8643"
+                disabled={!hermesEnabled}
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 transition-colors disabled:opacity-50"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <label className="text-xs text-white/50">{t('settings.hermesToken', 'Token (optional)')}</label>
+              <input
+                type="password"
+                value={hermesToken}
+                onChange={(e) => {
+                  setHermesToken(e.target.value)
+                  getStore().then(store => { store.set('hermes_token', e.target.value); store.save() })
+                }}
+                placeholder={t('settings.hermesTokenPlaceholder', 'Leave empty if no auth')}
+                disabled={!hermesEnabled}
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 transition-colors disabled:opacity-50"
+              />
+            </div>
+            <button
+              onClick={async () => {
+                setHermesTestResult(null)
+                setHermesTestMsg('')
+                try {
+                  const result: any = await invoke('get_health', { mode: 'remote', url: hermesUrl, token: hermesToken || '' })
+                  const count = result.agents ? Object.keys(result.agents).length : 1
+                  setHermesTestResult('success')
+                  setHermesTestMsg(`${count} ${t('settings.agents')} (Hermes)`)
+                } catch (e: any) {
+                  setHermesTestResult('error')
+                  setHermesTestMsg(String(e))
+                }
+              }}
+              disabled={!hermesEnabled}
+              className="self-start px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium text-white/70 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {t('settings.testConnection', 'Test Connection')}
+            </button>
+            {hermesTestMsg && (
+              <span className={`text-xs ${hermesTestResult === 'success' ? 'text-green-400' : 'text-red-400'}`}>
+                {hermesTestMsg}
+              </span>
+            )}
+          </div>
         </div>
       </section>
 
