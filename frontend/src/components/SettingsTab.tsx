@@ -72,16 +72,37 @@ function ConnectionRow({ conn, onUpdate, onDelete, disableLocal }: { conn: OcCon
           const key = await invoke('get_ssh_key_info', { sshHost: conn.host, sshUser: conn.user }) as string | null
           if (key) keyInfo = ` · ${t('settings.key')} ${key}`
         } catch {}
-        setTestMsg(`${result.length} ${t('settings.agents')}${keyInfo}`)
+        setTestMsg(`${result.length} ${t('settings.agents')}${keyInfo}`);
+        setTestResult('success');
+        setTimeout(() => setTestResult(null), 3000);
+      } else if (conn.type === 'api') {
+        // Hermes API connection — test the health endpoint
+        setTesting(true);
+        try {
+          const result: any = await invoke('get_health', { 
+            mode: 'remote', 
+            url: conn.url, 
+            token: conn.token || ''
+          });
+          if (cancelledRef.current) return;
+          const count = result.agents ? Object.keys(result.agents).length : 1;
+          setTestMsg(`${count} ${t('settings.agents')} (hermes)`);
+          setTestResult('success');
+        } catch (e: any) {
+          if (cancelledRef.current) return;
+          setTestResult('error');
+          setTestMsg(String(e));
+        }
+        setTesting(false);
       } else {
         const store = await getStore()
         const agentId = ((await store.get('tracked_agent')) as string) || 'main'
         const result: any = await invoke('get_status', { gatewayUrl: 'http://localhost:4446', token: '', agentId })
         if (cancelledRef.current) return
-        setTestMsg(`${result.sessions.length} ${t('settings.sessions')}`)
+        setTestMsg(`${result.sessions.length} ${t('settings.sessions')}`);
+        setTestResult('success');
+        setTimeout(() => setTestResult(null), 3000);
       }
-      setTestResult('success')
-      setTimeout(() => setTestResult(null), 3000)
     } catch (e: any) {
       if (cancelledRef.current) return
       setTestResult('error')
@@ -106,7 +127,7 @@ function ConnectionRow({ conn, onUpdate, onDelete, disableLocal }: { conn: OcCon
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="flex bg-black/50 p-0.5 rounded-lg border border-white/5">
-            {(['local', 'remote'] as const).map((typ) => {
+            {(['local', 'remote', 'api'] as const).map((typ) => {
               // Only one local connection allowed across all connections
               const disabled = typ === 'local' && disableLocal && conn.type !== 'local'
               return (
@@ -115,13 +136,13 @@ function ConnectionRow({ conn, onUpdate, onDelete, disableLocal }: { conn: OcCon
                   onClick={() => !disabled && onUpdate({ ...conn, type: typ })}
                   className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${conn.type === typ ? 'bg-white/10 text-white' : disabled ? 'text-white/15 cursor-not-allowed' : 'text-white/40 hover:text-white/60'}`}
                 >
-                  {typ === 'local' ? t('settings.local') : t('settings.remote')}
+                  {typ === 'local' ? t('settings.local') : typ === 'remote' ? t('settings.remote') : t('settings.api', 'API')}
                 </button>
               )
             })}
           </div>
           <span className="text-xs text-white/30">
-            {conn.type === 'local' ? '~/.openclaw' : conn.host ? `${conn.user || 'root'}@${conn.host}` : t('settings.notConfigured')}
+            {conn.type === 'local' ? '~/.openclaw' : conn.type === 'remote' ? conn.host ? `${conn.user || 'root'}@${conn.host}` : t('settings.notConfigured') : conn.url ? conn.url : t('settings.notConfigured')}
           </span>
         </div>
         <button onClick={onDelete} className="p-1.5 text-white/20 hover:text-red-400 transition-colors rounded-lg hover:bg-red-500/10">
@@ -130,40 +151,68 @@ function ConnectionRow({ conn, onUpdate, onDelete, disableLocal }: { conn: OcCon
       </div>
 
       <AnimatePresence>
-        {conn.type === 'remote' && (
+        {(conn.type === 'remote' || conn.type === 'api') && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             className="flex flex-col gap-3 overflow-hidden"
           >
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={conn.user || ''}
-                onChange={(e) => onUpdate({ ...conn, user: e.target.value })}
-                placeholder={t('settings.username')}
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                className="w-24 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 transition-colors"
-              />
-              <span className="self-center text-white/30 text-sm">@</span>
-              <input
-                type="text"
-                value={conn.host || ''}
-                onChange={(e) => onUpdate({ ...conn, host: e.target.value })}
-                placeholder={t('settings.serverAddress')}
-                className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 transition-colors"
-              />
-            </div>
-            <button
-              onClick={() => setShowGuide(!showGuide)}
-              className="flex items-center gap-1 text-xs text-white/40 hover:text-white/60 transition-colors w-fit"
-            >
-              <ChevronDown className={`w-3 h-3 transition-transform ${showGuide ? 'rotate-0' : '-rotate-90'}`} />
-              {t('settings.howToConnect')}
-            </button>
+            {conn.type === 'remote' && (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={conn.user || ''}
+                  onChange={(e) => onUpdate({ ...conn, user: e.target.value })}
+                  placeholder={t('settings.username')}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck="false"
+                  className="w-24 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 transition-colors"
+                />
+                <span className="self-center text-white/30 text-sm">@</span>
+                <input
+                  type="text"
+                  value={conn.host || ''}
+                  onChange={(e) => onUpdate({ ...conn, host: e.target.value })}
+                  placeholder={t('settings.serverAddress')}
+                  className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 transition-colors"
+                />
+              </div>
+            )}
+            {conn.type === 'api' && (
+              <div className="flex flex-col gap-3">
+                <input
+                  type="text"
+                  value={conn.url || ''}
+                  onChange={(e) => onUpdate({ ...conn, url: e.target.value })}
+                  placeholder="http://127.0.0.1:8643"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck="false"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 transition-colors"
+                />
+                <input
+                  type="password"
+                  value={conn.token || ''}
+                  onChange={(e) => onUpdate({ ...conn, token: e.target.value })}
+                  placeholder={t('settings.apiToken', 'API Token (optional)')}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck="false"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 transition-colors"
+                />
+              </div>
+            )}
+            {conn.type === 'remote' && (
+              <button
+                onClick={() => setShowGuide(!showGuide)}
+                className="flex items-center gap-1 text-xs text-white/40 hover:text-white/60 transition-colors w-fit"
+              >
+                <ChevronDown className={`w-3 h-3 transition-transform ${showGuide ? 'rotate-0' : '-rotate-90'}`} />
+                {t('settings.howToConnect')}
+              </button>
+            )}
             <AnimatePresence>
               {showGuide && (
                 <motion.div
@@ -397,7 +446,8 @@ export function SettingsTab({ notifySound, onChangeNotifySound, waitingSound, on
   const addConnection = () => {
     // Default to remote if a local connection already exists (only one local allowed)
     const hasLocal = connections.some(c => c.type === 'local')
-    const updated = [...connections, { id: crypto.randomUUID(), type: (hasLocal ? 'remote' : 'local') as OcConnection['type'] }]
+    const type = (hasLocal ? 'remote' : 'local') as OcConnection['type']
+    const updated = [...connections, { id: crypto.randomUUID(), name: 'New Connection', type }]
     setConnections(updated)
     saveOcConnections(updated)
   }

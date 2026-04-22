@@ -137,10 +137,18 @@ export async function loadOcConnections(): Promise<OcConnection[]> {
   const user = ((await store.get('ssh_user')) as string) || ''
   const connections: OcConnection[] = []
   if (mode === 'remote' && host && user) {
-    connections.push({ id: crypto.randomUUID(), type: 'remote', host, user })
+    connections.push({ id: crypto.randomUUID(), name: 'Remote', type: 'remote', host, user })
   } else {
-    connections.push({ id: crypto.randomUUID(), type: 'local' })
+    connections.push({ id: crypto.randomUUID(), name: 'Local', type: 'local' })
   }
+  // Auto-add Hermes API connection
+  connections.push({ 
+    id: crypto.randomUUID(), 
+    name: 'Hermes', 
+    type: 'api', 
+    url: 'http://127.0.0.1:8643',
+    token: ''
+  })
   await store.set('oc_connections', connections)
   await store.save()
   return connections

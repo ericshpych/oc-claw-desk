@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { ChevronDown, Edit2, X, UploadCloud, Check } from 'lucide-react'
 import type { CharacterMeta, AgentInfo } from '../lib/types'
-import { getStore, loadCharacters, saveCharacters, getActiveCharacter, setActiveCharacter, fileToDataUrl, MINI_CATEGORIES, CUSTOM_ASSET_PREFIX, DEFAULT_CHAR_NAME } from '../lib/store'
+import { getStore, loadCharacters, saveCharacters, getActiveCharacter, setActiveCharacter, fileToDataUrl, MINI_CATEGORIES, CUSTOM_ASSET_PREFIX, DEFAULT_CHAR_NAME, loadOcConnections } from '../lib/store'
 
 export function CharacterTab({ activeTab }: { activeTab: 'pet' | 'mini' }) {
   const { t } = useTranslation()
@@ -39,9 +39,27 @@ export function CharacterTab({ activeTab }: { activeTab: 'pet' | 'mini' }) {
     const store = await getStore()
     const ta = ((await store.get('tracked_agent')) as string) || 'main'
     setTrackedAgent(ta)
+    let agentList: AgentInfo[] = []
     try {
-      const agents = (await invoke('get_agents')) as AgentInfo[]
-      setAgentList(agents)
+      // Get agents from local/remote connections
+      const localAgents = (await invoke('get_agents')) as AgentInfo[]
+      agentList = [...localAgents]
+      
+      // Add agents from api connections (each api connection is one agent)
+      const ocConnections = await loadOcConnections()
+      for (const conn of ocConnections) {
+        if (conn.type === 'api' && conn.url && conn.url.trim().length > 0) {
+          // Each API connection is a single-agent instance (Hermes)
+          const apiAgents = (await invoke('get_agents', { 
+            mode: 'remote', 
+            url: conn.url, 
+            token: conn.token || '' 
+          })) as AgentInfo[]
+          agentList = [...agentList, ...apiAgents]
+        }
+      }
+      
+      setAgentList(agentList)
     } catch { /* agents not available */ }
   }
 

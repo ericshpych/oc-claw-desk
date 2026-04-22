@@ -521,6 +521,10 @@ function connToOcParams(conn: OcConnection): OcParams | null {
     if (conn.host && conn.user) return { mode: 'remote', sshHost: conn.host, sshUser: conn.user }
     return null // incomplete remote — skip
   }
+  if (conn.type === 'api') {
+    if (conn.url) return { mode: 'remote', url: conn.url, token: conn.token }
+    return null // incomplete — skip
+  }
   return {} // local
 }
 
@@ -550,6 +554,7 @@ export default function Mini() {
   // OpenClaw session chat
   const [selectedSessionKey, setSelectedSessionKey] = useState<{ agentId: string; key: string } | null>(null)
   const [sessionMessages, setSessionMessages] = useState<any[]>([])
+  const [chatInput, setChatInput] = useState('')
 
   // Claude Code & Cursor
   const [claudeSessions, setClaudeSessions] = useState<any[]>([])
@@ -766,7 +771,7 @@ export default function Mini() {
       setHasConfiguredOpenClaw(connections.some((conn) => connToOcParams(conn) !== null))
 
       // Detect connection config changes — show loading overlay if changed
-      const snapshot = JSON.stringify(connections.map((c) => ({ id: c.id, type: c.type, host: c.host, user: c.user })))
+      const snapshot = JSON.stringify(connections.map((c) => ({ id: c.id, type: c.type, host: c.host, user: c.user, url: c.url, token: c.token })))
       const configChanged = lastConnSnapshotRef.current !== '' && snapshot !== lastConnSnapshotRef.current
       lastConnSnapshotRef.current = snapshot
       if (configChanged) {
@@ -1315,6 +1320,43 @@ export default function Mini() {
       clearInterval(t)
     }
   }, [selectedSessionKey])
+
+  // Send chat message to OpenClaw/Hermes
+  const sendChatMessage = async () => {
+    if (!selectedSessionKey || !chatInput.trim()) return
+    const text = chatInput.trim()
+    setChatInput('')
+    
+    const oc = agentConnMapRef.current.get(selectedSessionKey.agentId) || {}
+    const realId = agentRealIdMapRef.current.get(selectedSessionKey.agentId) || selectedSessionKey.agentId
+    
+    try {
+      // Add our message to the UI immediately
+      setSessionMessages(prev => [
+        ...prev, 
+        { role: 'user', text, timestamp: Date.now() }
+      ])
+      // Send to server
+      await invoke('send_chat_message', {
+        agentId: realId,
+        message: text,
+        ...oc
+      })
+      // Refresh messages after a short delay
+      setTimeout(async () => {
+        const oc = agentConnMapRef.current.get(selectedSessionKey.agentId) || {}
+        const realId = agentRealIdMapRef.current.get(selectedSessionKey.agentId) || selectedSessionKey.agentId
+        const msgs = (await invoke('get_session_messages', { 
+          agentId: realId, 
+          sessionKey: selectedSessionKey.key, 
+          ...oc 
+        })) as any[]
+        setSessionMessages(msgs)
+      }, 500)
+    } catch (e) {
+      console.error('Failed to send message', e)
+    }
+  }
 
   // Fetch Claude conversation when selected
   useEffect(() => {
@@ -3657,11 +3699,37 @@ export default function Mini() {
                   exit={{ opacity: 0, filter: 'blur(8px)', y: -20 }}
                   transition={{ duration: 0.25, delay: 0.05 }}
                 >
+                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
                   {sessionMessages.length === 0 ? (
                     <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, textAlign: 'center', padding: '30px 0' }}>{t('common.loading')}</div>
                   ) : (
                     <ChatList messages={sessionMessages} accentColor="#2ecc71" />
                   )}
+                  </div>
+                  {/* Chat input for direct messaging */}
+                  <div className="border-t border-white/10 p-3 flex-shrink-0">
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey && chatInput.trim()) {
+                            sendChatMessage();
+                          }
+                        }}
+                        placeholder={t('mini.chatPlaceholder', 'Type a message...')}
+                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 outline-none focus:border-blue-500/50 transition-colors"
+                      />
+                      <button
+                        onClick={sendChatMessage}
+                        disabled={!chatInput.trim()}
+                        className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+                      >
+                        {t('common.send')}
+                      </button>
+                    </div>
+                  </div>
                 </motion.div>
               ) : selectedClaudeSession ? (
                 /* ===== Claude session chat ===== */

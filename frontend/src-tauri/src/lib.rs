@@ -1703,6 +1703,17 @@ async fn get_agents(mode: Option<String>, url: Option<String>, token: Option<Str
         // Gateway API fallback
         let url = url.as_deref().unwrap_or("");
         let token = token.as_deref().unwrap_or("");
+        // Check if this is an API connection (direct URL, no SSH) — this is Hermes
+        // Hermes is a single-agent instance, so just return one agent "hermes"
+        if !url.is_empty() && (ssh_host.is_none() || ssh_host.as_deref().unwrap().is_empty()) {
+            let mut agents = Vec::new();
+            agents.push(AgentInfo {
+                id: "main".to_string(),
+                identity_name: Some("Hermes".to_string()),
+                identity_emoji: Some("🤖".to_string()),
+            });
+            return Ok(agents);
+        }
         let result = invoke_tool(url, token, "agents_list", serde_json::json!({})).await?;
         let r = result.get("result").unwrap_or(&result);
         let agents_arr = r.pointer("/details/agents").and_then(|v| v.as_array())
@@ -1866,24 +1877,16 @@ async fn get_health(mode: Option<String>, url: Option<String>, token: Option<Str
         // Gateway API fallback
         let url = url.as_deref().unwrap_or("");
         let token = token.as_deref().unwrap_or("");
-        let result = invoke_tool(url, token, "sessions_list", serde_json::json!({"activeMinutes": 5})).await?;
-        let sessions = extract_sessions(&result);
-        let mut agent_active: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
-        for s in &sessions {
-            let agent_id = s["agentId"].as_str()
-                .or_else(|| s["key"].as_str().and_then(|k| k.split(':').nth(1)))
-                .unwrap_or("main").to_string();
-            let session_key = s["key"].as_str().unwrap_or("");
-            let active = if !session_key.is_empty() {
-                is_remote_session_active(url, token, session_key, s).await
-            } else {
-                is_session_active(s)
-            };
-            let entry = agent_active.entry(agent_id).or_insert(false);
-            if active { *entry = true; }
+        // Check if this is an API connection (direct URL, no SSH) — this is Hermes
+        // Hermes is a single-agent instance, so just fake a single active agent with id 'main'
+        // (matches what get_agents returns)
+        if !url.is_empty() && (ssh_host.is_none() || ssh_host.as_deref().unwrap().is_empty()) {
+            let mut agent_active: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+            agent_active.insert("main".to_string(), true);
+            let agents = agent_active.into_iter().map(|(agent_id, active)| AgentHealth { agent_id, active, sessions: vec![] }).collect();
+            return Ok(HealthResult { agents, gateway_alive: true });
         }
-        let agents = agent_active.into_iter().map(|(agent_id, active)| AgentHealth { agent_id, active, sessions: vec![] }).collect();
-        return Ok(HealthResult { agents, gateway_alive: true });
+        let result = invoke_tool(url, token, "sessions_list", serde_json::json!({"activeMinutes": 5})).await?;
     }
 
     // === local mode — content-based detection with session-level data ===
@@ -2109,6 +2112,33 @@ fn truncate_str(s: &str, max: usize) -> String {
 async fn get_agent_metrics(agent_id: String, mode: Option<String>, url: Option<String>, token: Option<String>, ssh_host: Option<String>, ssh_user: Option<String>) -> Result<AgentMetrics, String> {
     log::info!("[get_agent_metrics] agent_id={} mode={:?} ssh_host={:?}", agent_id, mode, ssh_host);
     if mode.as_deref() == Some("remote") {
+        // Check if this is an API connection (has url, not ssh_host/user)
+        if url.is_some() {
+            // Hermes API connection — single static agent, no session tracking needed
+            let metrics = AgentMetrics {
+                agent_id: agent_id.clone(),
+                active: true,
+                current_model: None,
+                thinking_level: None,
+                active_session_count: 0,
+                current_task: None,
+                current_tool: None,
+                total_tokens: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                total_cost: 0.0,
+                tool_calls: vec![],
+                recent_actions: vec![],
+                error_count: 0,
+                message_count: 0,
+                session_start: None,
+                last_activity: None,
+                channel: None,
+            };
+            return Ok(metrics);
+        }
         let sh = ssh_host.as_deref().unwrap_or("");
         let su = ssh_user.as_deref().unwrap_or("");
         if !sh.is_empty() && !su.is_empty() {
@@ -4050,10 +4080,11 @@ async fn get_agent_sessions(agent_id: String, mode: Option<String>, url: Option<
                 Ok(c) => { log::info!("[get_agent_sessions] SSH read OK, len={}", c.len()); c }
                 Err(e) => { log::error!("[get_agent_sessions] SSH read failed: {}", e); return Err(format!("read remote sessions.json: {}", e)); }
             };
-            let map: serde_json::Map<String, serde_json::Value> =
-                serde_json::from_str(&content).map_err(|e| { log::error!("[get_agent_sessions] parse failed: {}", e); e.to_string() })?;
+            let map: serde_json::Value = serde_json::from_str(&content)
+                .map_err(|e| format!("parse remote sessions.json: {}", e))?;
+            let obj = map.as_object().ok_or_else(|| "expected JSON object".to_string())?;
 
-            let mut sessions: Vec<MiniSessionInfo> = map.iter()
+            let mut sessions: Vec<MiniSessionInfo> = obj.iter()
                 .filter(|(key, val)| {
                     !key.contains(":cron:") && !val["sessionFile"].as_str().unwrap_or("").is_empty()
                 })
@@ -4072,15 +4103,55 @@ async fn get_agent_sessions(agent_id: String, mode: Option<String>, url: Option<
                 .collect();
             sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
             sessions.truncate(5);
-            log::info!("[get_agent_sessions] SSH metadata result: {} sessions (of {} total)", sessions.len(), map.len());
+            log::info!("[get_agent_sessions] SSH metadata result: {} sessions (of {} total)", sessions.len(), obj.len());
             return Ok(sessions);
         }
         // Gateway API fallback
+        let mut sessions: Vec<MiniSessionInfo> = Vec::new();
         let url = url.as_deref().unwrap_or("");
         let token = token.as_deref().unwrap_or("");
+        // Check if this is Hermes Gateway (uses RESTful API instead of tool invoke)
+        // Try Hermes API first: GET /v1/sessions
+        let client = reqwest::Client::new();
+        let hermes_url = format!("{}/v1/sessions", url.strip_suffix('/').unwrap_or(url));
+        let mut hermes_req = client.get(&hermes_url);
+        if !token.is_empty() {
+            hermes_req = hermes_req.header("Authorization", format!("Bearer {}", token));
+        }
+        let hermes_resp = hermes_req.send().await;
+        if hermes_resp.is_ok() && hermes_resp.as_ref().unwrap().status().is_success() {
+            // Hermes API success
+            let hermes_json: serde_json::Value = hermes_resp.unwrap().json().await
+                .map_err(|e| format!("parse Hermes sessions response: {}", e))?;
+            if let Some(sessions_arr) = hermes_json.get("sessions").and_then(|v| v.as_array()) {
+                for s in sessions_arr {
+                    let session_id = s["id"].as_str().unwrap_or_default().to_string();
+                    if session_id.contains(":cron:") { continue; }
+                    let label = s["label"].as_str().unwrap_or(&session_id).to_string();
+                    sessions.push(MiniSessionInfo {
+                        key: session_id.clone(),
+                        agent_id: agent_id.clone(),
+                        session_id: session_id.clone(),
+                        label: label,
+                        channel: s["channel"].as_str().map(|s| s.to_string()),
+                        updated_at: s["updated_at"].as_u64().unwrap_or(0),
+                        active: s["active"].as_bool().unwrap_or(false),
+                        last_user_msg: None,
+                        last_assistant_msg: None,
+                        session_file: None,
+                    });
+                }
+                sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                sessions.truncate(20);
+                log::info!("[get_agent_sessions] Hermes API: got {} sessions", sessions.len());
+                return Ok(sessions);
+            }
+        }
+        // Fallback to original OpenClaw tool API if Hermes API fails
+        // Fallback to original OpenClaw tool API if Hermes API fails
         let result = invoke_tool(url, token, "sessions_list", serde_json::json!({"agentId": agent_id, "activeMinutes": 60})).await?;
         let arr = extract_sessions(&result);
-        let mut sessions: Vec<MiniSessionInfo> = arr.iter().filter_map(|s| {
+        sessions = arr.iter().filter_map(|s| {
             let key = s["key"].as_str().or(s["sessionId"].as_str())?.to_string();
             if key.contains(":cron:") { return None; }
             Some(MiniSessionInfo {
@@ -4310,6 +4381,47 @@ async fn get_session_messages(agent_id: String, session_key: String, mode: Optio
         // Gateway API fallback
         let url = url.as_deref().unwrap_or("");
         let token = token.as_deref().unwrap_or("");
+        // Check if this is Hermes Gateway (uses RESTful API instead of tool invoke)
+        let client = reqwest::Client::new();
+        // Try Hermes API first: GET /api/sessions/{session_key}/messages
+        let hermes_url = format!("{}/api/sessions/{}/messages", url.strip_suffix('/').unwrap_or(url), session_key);
+        let mut hermes_req = client.get(&hermes_url);
+        if !token.is_empty() {
+            hermes_req = hermes_req.header("Authorization", format!("Bearer {}", token));
+        }
+        let hermes_resp = hermes_req.send().await;
+        if hermes_resp.is_ok() && hermes_resp.as_ref().unwrap().status().is_success() {
+            // Hermes API success
+            let hermes_json: serde_json::Value = hermes_resp.unwrap().json().await
+                .map_err(|e| format!("parse Hermes messages response: {}", e))?;
+            let empty_arr = vec![];
+            let messages_arr = hermes_json.get("messages").and_then(|v| v.as_array()).unwrap_or(&empty_arr);
+            let mut messages: Vec<ChatMessage> = vec![];
+            for msg in messages_arr {
+                let role = msg["role"].as_str().unwrap_or("");
+                if role != "user" && role != "assistant" { continue; }
+                let content = if let Some(arr) = msg["content"].as_array() {
+                    arr.iter()
+                        .filter(|item| item["type"].as_str() == Some("text"))
+                        .filter_map(|item| item["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else if let Some(s) = msg["content"].as_str() {
+                    s.to_string()
+                } else { continue };
+                if content.is_empty() { continue; };
+                let ts = msg["timestamp"].as_u64().map(|ms| {
+                    chrono::DateTime::from_timestamp((ms / 1000) as i64, 0)
+                        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                        .unwrap_or_default()
+                });
+                messages.push(ChatMessage { role: role.to_string(), text: content, timestamp: ts });
+            }
+            if messages.len() > 50 { messages = messages.split_off(messages.len() - 50); }
+            log::info!("[get_session_messages] Hermes API: got {} messages", messages.len());
+            return Ok(messages);
+        }
+        // Fallback to original OpenClaw tool API if Hermes API fails
         let result = invoke_tool(url, token, "sessions_history", serde_json::json!({
             "sessionKey": session_key,
             "limit": 50,
@@ -9231,7 +9343,42 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_status, send_chat, open_detail_panel, save_character_gif, delete_character_assets, delete_character_gif, get_agents, get_health, get_agent_metrics, interrupt_agent, scan_characters, get_agent_extra_info, open_mini, close_mini, set_mini_expanded, set_mini_size, set_efficiency_hover_tracking, resize_mini_height, move_mini_by, get_mini_origin, set_mini_origin, set_ime_mode, get_agent_sessions, get_session_preview, get_session_messages, get_active_sessions, proxy_post, play_sound, get_claude_sessions, get_claude_conversation, install_claude_hooks, install_cursor_hooks, remove_claude_session, resolve_claude_permission, get_claude_stats, open_url, activate_app, focus_cursor_terminal, check_ax_permission, request_ax_permission, jump_to_claude_terminal, check_for_update, run_update, close_ssh, read_local_file, list_backgrounds, save_background, get_background_data, exit_app, get_ssh_key_info, reset_ssh, get_ui_scale, update_tray_language])
+#[tauri::command]
+async fn send_chat_message(agent_id: String, message: String, mode: Option<String>, url: Option<String>, token: Option<String>, _ssh_host: Option<String>, _ssh_user: Option<String>) -> Result<(), String> {
+    log::info!("[send_chat_message] agent_id={} mode={:?} url={:?}", agent_id, mode, url);
+    
+    // For API connections (Hermes Gateway), send message via REST API
+    if mode.as_deref() == Some("remote") && url.is_some() {
+        let url = url.as_deref().unwrap_or("");
+        let token = token.as_deref().unwrap_or("");
+        
+        // Hermes API: POST /v1/chat - create a new session with user message
+        let hermes_url = format!("{}/v1/chat", url.strip_suffix('/').unwrap_or(url));
+        let client = reqwest::Client::new();
+        let mut request = client.post(&hermes_url);
+        if !token.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", token));
+        }
+        let body = serde_json::json!({
+            "message": message
+        });
+        let response = request.json(&body).send().await
+            .map_err(|e| format!("Failed to send chat message: {}", e))?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("API error: {} - {}", status.as_u16(), text));
+        }
+        
+        log::info!("[send_chat_message] message sent successfully to agent {}", agent_id);
+        return Ok(());
+    }
+    
+    Ok(())
+}
+
+            .invoke_handler(tauri::generate_handler![send_chat_message, get_status, send_chat, open_detail_panel, save_character_gif, delete_character_assets, delete_character_gif, get_agents, get_health, get_agent_metrics, interrupt_agent, scan_characters, get_agent_extra_info, open_mini, close_mini, set_mini_expanded, set_mini_size, set_efficiency_hover_tracking, resize_mini_height, move_mini_by, get_mini_origin, set_mini_origin, set_ime_mode, get_agent_sessions, get_session_preview, get_session_messages, get_active_sessions, proxy_post, play_sound, get_claude_sessions, get_claude_conversation, install_claude_hooks, install_cursor_hooks, remove_claude_session, resolve_claude_permission, get_claude_stats, open_url, activate_app, focus_cursor_terminal, check_ax_permission, request_ax_permission, jump_to_claude_terminal, check_for_update, run_update, close_ssh, read_local_file, list_backgrounds, save_background, get_background_data, exit_app, get_ssh_key_info, reset_ssh, get_ui_scale, update_tray_language])
         .manage(ActiveAgentPid { pid: Mutex::new(None) })
         .manage(ClaudeState { sessions: Arc::new(Mutex::new(HashMap::new())), pending_permissions: Arc::new(Mutex::new(HashMap::new())) })
         .run(tauri::generate_context!())

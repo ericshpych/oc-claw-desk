@@ -82,9 +82,12 @@ export interface PipelineConfig {
 
 export interface OcConnection {
   id: string
-  type: 'local' | 'remote'
+  name: string
+  type: 'local' | 'remote' | 'api'
   host?: string
   user?: string
+  url?: string
+  token?: string
 }
 
 export type CardStatus = 'idle' | 'generating' | 'processing' | 'ready' | 'error'

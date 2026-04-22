@@ -82,6 +82,7 @@
     "noConnections": "暂无连接，点击「添加」来连接 OpenClaw 实例",
     "local": "本地",
     "remote": "远程",
+    "api": "API",
     "notConfigured": "未配置",
     "username": "用户名",
     "serverAddress": "服务器地址",

@@ -82,6 +82,7 @@
     "noConnections": "No connections. Click \"Add\" to connect an OpenClaw instance.",
     "local": "Local",
     "remote": "Remote",
+    "api": "API",
     "notConfigured": "Not configured",
     "username": "Username",
     "serverAddress": "Server address",
