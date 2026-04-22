@@ -546,9 +546,19 @@ export function SettingsTab({ notifySound, onChangeNotifySound, waitingSound, on
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium text-white">Hermes</h2>
-          <Toggle checked={hermesEnabled} onChange={(val) => {
+          <Toggle checked={hermesEnabled} onChange={async (val) => {
             setHermesEnabled(val)
-            getStore().then(store => { store.set('hermes_enabled', val); store.save() })
+            const store = await getStore()
+            await store.set('hermes_enabled', val)
+            await store.save()
+            // Update Hermes in connections
+            const conns = await loadOcConnections()
+            const hermesConn = conns.find(c => c.type === 'api' && c.name === 'Hermes')
+            if (hermesConn) {
+              hermesConn.url = hermesUrl
+              hermesConn.token = hermesToken
+            }
+            await saveOcConnections(conns)
           }} />
         </div>
         <div className="bg-[#0f0f0f] border border-white/5 rounded-2xl overflow-hidden">
@@ -558,9 +568,18 @@ export function SettingsTab({ notifySound, onChangeNotifySound, waitingSound, on
               <input
                 type="text"
                 value={hermesUrl}
-                onChange={(e) => {
+                onChange={async (e) => {
                   setHermesUrl(e.target.value)
-                  getStore().then(store => { store.set('hermes_url', e.target.value); store.save() })
+                  const store = await getStore()
+                  await store.set('hermes_url', e.target.value)
+                  await store.save()
+                  // Update Hermes in connections
+                  const conns = await loadOcConnections()
+                  const hermesConn = conns.find(c => c.type === 'api' && c.name === 'Hermes')
+                  if (hermesConn) {
+                    hermesConn.url = e.target.value
+                  }
+                  await saveOcConnections(conns)
                 }}
                 placeholder="http://127.0.0.1:8643"
                 disabled={!hermesEnabled}
@@ -572,9 +591,18 @@ export function SettingsTab({ notifySound, onChangeNotifySound, waitingSound, on
               <input
                 type="password"
                 value={hermesToken}
-                onChange={(e) => {
+                onChange={async (e) => {
                   setHermesToken(e.target.value)
-                  getStore().then(store => { store.set('hermes_token', e.target.value); store.save() })
+                  const store = await getStore()
+                  await store.set('hermes_token', e.target.value)
+                  await store.save()
+                  // Update Hermes in connections
+                  const conns = await loadOcConnections()
+                  const hermesConn = conns.find(c => c.type === 'api' && c.name === 'Hermes')
+                  if (hermesConn) {
+                    hermesConn.token = e.target.value
+                  }
+                  await saveOcConnections(conns)
                 }}
                 placeholder={t('settings.hermesTokenPlaceholder', 'Leave empty if no auth')}
                 disabled={!hermesEnabled}

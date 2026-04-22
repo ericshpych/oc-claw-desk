@@ -129,7 +129,30 @@ export async function setActiveCharacter(name: string) {
 export async function loadOcConnections(): Promise<OcConnection[]> {
   const store = await getStore()
   const existing = await store.get('oc_connections') as OcConnection[] | null
-  if (existing) return existing
+
+  // Load Hermes settings from dedicated keys (set by SettingsTab Hermes section)
+  const hermesUrl = ((await store.get('hermes_url')) as string) || 'http://127.0.0.1:8643'
+  const hermesToken = ((await store.get('hermes_token')) as string) || ''
+  const hermesEnabled = (await store.get('hermes_enabled')) as boolean | undefined
+
+  if (existing) {
+    // Update existing Hermes connection with settings from Hermes section
+    const existingHermes = existing.find(c => c.type === 'api' && c.name === 'Hermes')
+    if (existingHermes) {
+      existingHermes.url = hermesUrl
+      existingHermes.token = hermesToken
+    } else if (hermesEnabled !== false) {
+      // Auto-add Hermes if no api connection exists and Hermes is not explicitly disabled
+      existing.push({
+        id: crypto.randomUUID(),
+        name: 'Hermes',
+        type: 'api',
+        url: hermesUrl,
+        token: hermesToken
+      })
+    }
+    return existing
+  }
 
   // Migrate from old format
   const mode = ((await store.get('oc_mode')) as string) || 'local'
@@ -141,14 +164,16 @@ export async function loadOcConnections(): Promise<OcConnection[]> {
   } else {
     connections.push({ id: crypto.randomUUID(), name: 'Local', type: 'local' })
   }
-  // Auto-add Hermes API connection
-  connections.push({ 
-    id: crypto.randomUUID(), 
-    name: 'Hermes', 
-    type: 'api', 
-    url: 'http://127.0.0.1:8643',
-    token: ''
-  })
+  // Auto-add Hermes API connection (unless explicitly disabled)
+  if (hermesEnabled !== false) {
+    connections.push({
+      id: crypto.randomUUID(),
+      name: 'Hermes',
+      type: 'api',
+      url: hermesUrl,
+      token: hermesToken
+    })
+  }
   await store.set('oc_connections', connections)
   await store.save()
   return connections
