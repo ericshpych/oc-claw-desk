@@ -1061,6 +1061,41 @@ fn update_tray_language(app: tauri::AppHandle, lang: String) -> Result<(), Strin
 }
 
 #[tauri::command]
+async fn send_chat_message(agent_id: String, message: String, mode: Option<String>, url: Option<String>, token: Option<String>, _ssh_host: Option<String>, _ssh_user: Option<String>) -> Result<(), String> {
+    log::info!("[send_chat_message] agent_id={} mode={:?} url={:?}", agent_id, mode, url);
+
+    // For API connections (Hermes Gateway), send message via REST API
+    if mode.as_deref() == Some("remote") && url.is_some() {
+        let url = url.as_deref().unwrap_or("");
+        let token = token.as_deref().unwrap_or("");
+
+        // Hermes API: POST /v1/chat - create a new session with user message
+        let hermes_url = format!("{}/v1/chat", url.strip_suffix('/').unwrap_or(url));
+        let client = reqwest::Client::new();
+        let mut request = client.post(&hermes_url);
+        if !token.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", token));
+        }
+        let body = serde_json::json!({
+            "message": message
+        });
+        let response = request.json(&body).send().await
+            .map_err(|e| format!("Failed to send chat message: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("API error: {} - {}", status.as_u16(), text));
+        }
+
+        log::info!("[send_chat_message] message sent successfully to agent {}", agent_id);
+        return Ok(());
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn exit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
@@ -9343,40 +9378,6 @@ pub fn run() {
 
             Ok(())
         })
-#[tauri::command]
-async fn send_chat_message(agent_id: String, message: String, mode: Option<String>, url: Option<String>, token: Option<String>, _ssh_host: Option<String>, _ssh_user: Option<String>) -> Result<(), String> {
-    log::info!("[send_chat_message] agent_id={} mode={:?} url={:?}", agent_id, mode, url);
-    
-    // For API connections (Hermes Gateway), send message via REST API
-    if mode.as_deref() == Some("remote") && url.is_some() {
-        let url = url.as_deref().unwrap_or("");
-        let token = token.as_deref().unwrap_or("");
-        
-        // Hermes API: POST /v1/chat - create a new session with user message
-        let hermes_url = format!("{}/v1/chat", url.strip_suffix('/').unwrap_or(url));
-        let client = reqwest::Client::new();
-        let mut request = client.post(&hermes_url);
-        if !token.is_empty() {
-            request = request.header("Authorization", format!("Bearer {}", token));
-        }
-        let body = serde_json::json!({
-            "message": message
-        });
-        let response = request.json(&body).send().await
-            .map_err(|e| format!("Failed to send chat message: {}", e))?;
-        
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(format!("API error: {} - {}", status.as_u16(), text));
-        }
-        
-        log::info!("[send_chat_message] message sent successfully to agent {}", agent_id);
-        return Ok(());
-    }
-    
-    Ok(())
-}
 
             .invoke_handler(tauri::generate_handler![send_chat_message, get_status, send_chat, open_detail_panel, save_character_gif, delete_character_assets, delete_character_gif, get_agents, get_health, get_agent_metrics, interrupt_agent, scan_characters, get_agent_extra_info, open_mini, close_mini, set_mini_expanded, set_mini_size, set_efficiency_hover_tracking, resize_mini_height, move_mini_by, get_mini_origin, set_mini_origin, set_ime_mode, get_agent_sessions, get_session_preview, get_session_messages, get_active_sessions, proxy_post, play_sound, get_claude_sessions, get_claude_conversation, install_claude_hooks, install_cursor_hooks, remove_claude_session, resolve_claude_permission, get_claude_stats, open_url, activate_app, focus_cursor_terminal, check_ax_permission, request_ax_permission, jump_to_claude_terminal, check_for_update, run_update, close_ssh, read_local_file, list_backgrounds, save_background, get_background_data, exit_app, get_ssh_key_info, reset_ssh, get_ui_scale, update_tray_language])
         .manage(ActiveAgentPid { pid: Mutex::new(None) })
