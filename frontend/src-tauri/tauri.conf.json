@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "oc-claw",
+  "productName": "oc-claw-desk",
   "version": "1.8.0",
-  "identifier": "com.openclaw.ooclaw",
+  "identifier": "com.openclaw.oc-claw-desk",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5222",

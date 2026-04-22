@@ -563,6 +563,16 @@ export default function Mini() {
   const [sessionMessages, setSessionMessages] = useState<any[]>([])
   const [chatInput, setChatInput] = useState('')
 
+  // Action menu state (double-click mascot)
+  const [showActionMenu, setShowActionMenu] = useState(false)
+  const [actionMenuPosition, setActionMenuPosition] = useState({ x: 0, y: 0 })
+
+  // CLI Chat panel state
+  const [cliChatSession, setCliChatSession] = useState<MiniSessionInfo | null>(null)
+  const [cliChatMessages, setCliChatMessages] = useState<ChatMessage[]>([])
+  const [cliChatInput, setCliChatInput] = useState('')
+  const [cliChatLoading, setCliChatLoading] = useState(false)
+
   // Claude Code & Cursor
   const [claudeSessions, setClaudeSessions] = useState<any[]>([])
   const claudeSessionsRef = useRef<any[]>([])
@@ -701,16 +711,6 @@ export default function Mini() {
 
   // Load mini character from store
   const loadMiniChar = useCallback(async () => {
-
-  // Action menu state (double-click mascot)
-  const [showActionMenu, setShowActionMenu] = useState(false)
-  const [actionMenuPosition, setActionMenuPosition] = useState({ x: 0, y: 0 })
-
-  // CLI Chat panel state
-  const [cliChatSession, setCliChatSession] = useState<MiniSessionInfo | null>(null)
-  const [cliChatMessages, setCliChatMessages] = useState<ChatMessage[]>([])
-  const [cliChatInput, setCliChatInput] = useState('')
-  const [cliChatLoading, setCliChatLoading] = useState(false)
     const store = await load('settings.json', { defaults: {}, autoSave: true })
     await store.reload()
     const miniCharName = ((await store.get('mini_character')) as string) || ''
