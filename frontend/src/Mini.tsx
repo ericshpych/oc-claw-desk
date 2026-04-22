@@ -4437,7 +4437,7 @@ export default function Mini() {
                     setCliChatMessages((prev) => [...prev, { role: 'user', text: inputMsg }])
                     try {
                       // Get agent connection info
-                      const agentConn = connections.find((c) => c.id === cliChatSession!.agentId)
+                      const agentConn = connectionsRef.current.find((c: any) => c.id === cliChatSession!.agentId)
                       const mode = agentConn?.type === 'api' ? 'remote' : undefined
                       const url = agentConn?.type === 'api' ? agentConn.url : undefined
                       const token = agentConn?.type === 'api' ? agentConn.token : undefined
@@ -4476,7 +4476,7 @@ export default function Mini() {
                   setCliChatLoading(true)
                   setCliChatMessages((prev) => [...prev, { role: 'user', text: inputMsg }])
                   try {
-                    const agentConn = connections.find((c) => c.id === cliChatSession!.agentId)
+                    const agentConn = connectionsRef.current.find((c: any) => c.id === cliChatSession!.agentId)
                     const mode = agentConn?.type === 'api' ? 'remote' : undefined
                     const url = agentConn?.type === 'api' ? agentConn.url : undefined
                     const token = agentConn?.type === 'api' ? agentConn.token : undefined
