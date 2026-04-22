@@ -55,7 +55,10 @@
     "other": "其他",
     "createChar": "创建角色",
     "ipGenshin": "原神",
-    "ipUmaMusume": "赛马娘"
+    "ipUmaMusume": "赛马娘",
+    "sessionChat": "会话对话",
+    "inputPlaceholder": "输入命令或消息...",
+    "send": "发送"
   },
 
   "charNames": {

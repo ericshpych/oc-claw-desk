@@ -61,6 +61,12 @@ interface SessionPreview {
   lastAssistantMsg?: string
 }
 
+interface ChatMessage {
+  role: string
+  text: string
+  timestamp?: string
+}
+
 interface SessionSlot {
   agentId: string
   sessionIdx: number
@@ -305,7 +311,7 @@ function getMiniGif(char: CharacterMeta | undefined, petState: PetState | boolea
   return idleGifs[0] || allGifs[0]
 }
 
-type LargePetAction = 'work' | 'rest' | 'question' | 'grasp' | 'shy' | 'angry'
+type LargePetAction = 'work' | 'rest' | 'question' | 'grasp' | 'shy' | 'angry' | 'think' | 'idle' | 'happy' | 'sleep' | 'wave'
 
 function getLargeVideo(char: CharacterMeta | undefined, petState: PetState, overrideAction: string | null, fallbackLargeActions?: Record<string, string>): string | undefined {
   const la = char?.largeActions && Object.keys(char.largeActions).length > 0
@@ -545,6 +551,7 @@ export default function Mini() {
   const lastConnSnapshotRef = useRef<string>('')
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dismissedSessionsRef = useRef<Map<string, number>>(new Map())
+  const connectionsRef = useRef<any[]>([])
 
   // Agent detail
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
@@ -694,6 +701,16 @@ export default function Mini() {
 
   // Load mini character from store
   const loadMiniChar = useCallback(async () => {
+
+  // Action menu state (double-click mascot)
+  const [showActionMenu, setShowActionMenu] = useState(false)
+  const [actionMenuPosition, setActionMenuPosition] = useState({ x: 0, y: 0 })
+
+  // CLI Chat panel state
+  const [cliChatSession, setCliChatSession] = useState<MiniSessionInfo | null>(null)
+  const [cliChatMessages, setCliChatMessages] = useState<ChatMessage[]>([])
+  const [cliChatInput, setCliChatInput] = useState('')
+  const [cliChatLoading, setCliChatLoading] = useState(false)
     const store = await load('settings.json', { defaults: {}, autoSave: true })
     await store.reload()
     const miniCharName = ((await store.get('mini_character')) as string) || ''
@@ -768,6 +785,7 @@ export default function Mini() {
     try {
       const store = await load('settings.json', { defaults: {}, autoSave: true })
       const connections = await loadOcConnections()
+      connectionsRef.current = connections
       setHasConfiguredOpenClaw(connections.some((conn) => connToOcParams(conn) !== null))
 
       // Detect connection config changes — show loading overlay if changed
@@ -2363,6 +2381,13 @@ export default function Mini() {
         >
           <div
             onPointerDown={handleMascotPointerDown}
+            onDoubleClick={(e) => {
+              if (!largeMascotRef.current) return
+              e.stopPropagation()
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+              setActionMenuPosition({ x: rect.left + rect.width / 2, y: rect.top })
+              setShowActionMenu(true)
+            }}
             onMouseMove={undefined}
             onMouseLeave={undefined}
             style={{
@@ -2774,22 +2799,28 @@ export default function Mini() {
                                     transition={{ duration: 0.2, delay: index * 0.05 }}
                                     data-no-drag
                                     onClick={() => {
-                                      const ch = (s.channel || '').toLowerCase()
-                                      const appName =
-                                        ch.includes('feishu') || ch.includes('lark')
-                                          ? 'Lark'
-                                          : ch.includes('telegram')
-                                            ? 'Telegram'
-                                            : ch.includes('discord')
-                                              ? 'Discord'
-                                              : ch.includes('slack')
-                                                ? 'Slack'
-                                                : ch.includes('wechat') || ch.includes('weixin')
-                                                  ? 'WeChat'
-                                                  : null
-                                      if (appName) {
-                                        invoke('activate_app', { appName }).catch((err: unknown) => console.warn('activate failed:', err))
-                                      }
+                                      // Open CLI chat panel for this session
+                                      setCliChatSession(s)
+                                      setCliChatMessages([])
+                                      // Fetch initial messages
+                                      ;(async () => {
+                                        try {
+                                          const agentConn = connectionsRef.current.find((c: any) => c.id === s.agentId)
+                                          const mode = agentConn?.type === 'api' ? 'remote' : undefined
+                                          const url = agentConn?.type === 'api' ? agentConn.url : undefined
+                                          const token = agentConn?.type === 'api' ? agentConn.token : undefined
+                                          const msgs = await invoke('get_session_messages', {
+                                            agent_id: s.agentId,
+                                            session_key: s.sessionId,
+                                            mode,
+                                            url,
+                                            token,
+                                          }) as ChatMessage[]
+                                          setCliChatMessages(msgs.slice(-20))
+                                        } catch (e) {
+                                          console.error('fetch messages error:', e)
+                                        }
+                                      })()
                                     }}
                                     className="group flex items-center gap-3 px-4 hover:bg-white/[0.04] transition-colors cursor-pointer"
                                     style={{ padding: '10px 16px' }}
@@ -4279,6 +4310,205 @@ export default function Mini() {
           setCharacters(chars)
         }}
       />
+
+      {/* Action Menu - shown on double-click mascot */}
+      {showActionMenu && largeMascot && (
+        <div
+          style={{
+            position: 'fixed',
+            left: actionMenuPosition.x,
+            top: actionMenuPosition.y,
+            transform: 'translate(-50%, -100%)',
+            zIndex: 9999,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div
+            className="bg-[#1a1a1a] border border-white/20 rounded-xl p-2 shadow-2xl"
+            onMouseLeave={() => setShowActionMenu(false)}
+          >
+            <div className="grid grid-cols-3 gap-1">
+              {(['think', 'idle', 'happy', 'sleep', 'shy', 'wave'] as const).map((action) => (
+                <button
+                  key={action}
+                  onClick={() => {
+                    setLargePetAction(action)
+                    largePetActionRef.current = action
+                    if (largeActionTimerRef.current) clearTimeout(largeActionTimerRef.current)
+                    largeActionTimerRef.current = setTimeout(() => {
+                      setLargePetAction(null)
+                      largePetActionRef.current = null
+                      largeActionTimerRef.current = null
+                    }, 3000)
+                    setShowActionMenu(false)
+                  }}
+                  className="px-3 py-2 text-xs text-white/80 hover:bg-white/10 rounded-lg transition-colors whitespace-nowrap"
+                >
+                  {action === 'think' ? '🤔 思考' :
+                   action === 'idle' ? '😶 待机' :
+                   action === 'happy' ? '😊 开心' :
+                   action === 'sleep' ? '😴 睡觉' :
+                   action === 'shy' ? '😳 害羞' :
+                   action === 'wave' ? '👋 招手' : action}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CLI Chat Panel */}
+      {cliChatSession && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.9)',
+            zIndex: 9998,
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+          onClick={() => {
+            setCliChatSession(null)
+            setCliChatMessages([])
+          }}
+        >
+          <div
+            className="bg-[#1a1a1a] border-b border-white/10 p-4 flex items-center justify-between"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-white/60 text-sm">{t('mini.sessionChat', '会话对话')}</span>
+              <span className="text-white/40 text-xs">•</span>
+              <span className="text-white/60 text-xs">{cliChatSession.label}</span>
+            </div>
+            <button
+              onClick={() => {
+                setCliChatSession(null)
+                setCliChatMessages([])
+              }}
+              className="text-white/40 hover:text-white transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* Chat Messages */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {cliChatMessages.map((msg, idx) => (
+              <div
+                key={idx}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div
+                  className={`max-w-[80%] rounded-xl px-4 py-2 text-sm ${
+                    msg.role === 'user'
+                      ? 'bg-blue-600 text-white'
+                      : msg.role === 'assistant'
+                      ? 'bg-[#2a2a2a] text-white/90'
+                      : 'bg-white/10 text-white/50 text-xs'
+                  }`}
+                >
+                  <pre className="whitespace-pre-wrap font-sans">{msg.text}</pre>
+                </div>
+              </div>
+            ))}
+            {cliChatLoading && (
+              <div className="text-white/40 text-sm">{t('mini.loading', '加载中...')}</div>
+            )}
+          </div>
+
+          {/* Input */}
+          <div className="p-4 border-t border-white/10">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={cliChatInput}
+                onChange={(e) => setCliChatInput(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === 'Enter' && cliChatInput.trim()) {
+                    const inputMsg = cliChatInput.trim()
+                    setCliChatInput('')
+                    setCliChatLoading(true)
+                    // Add user message
+                    setCliChatMessages((prev) => [...prev, { role: 'user', text: inputMsg }])
+                    try {
+                      // Get agent connection info
+                      const agentConn = connections.find((c) => c.id === cliChatSession!.agentId)
+                      const mode = agentConn?.type === 'api' ? 'remote' : undefined
+                      const url = agentConn?.type === 'api' ? agentConn.url : undefined
+                      const token = agentConn?.type === 'api' ? agentConn.token : undefined
+                      // Send message
+                      await invoke('send_chat_message', {
+                        agent_id: cliChatSession!.agentId,
+                        message: inputMsg,
+                        mode,
+                        url,
+                        token,
+                      })
+                      // Fetch messages
+                      const msgs = await invoke('get_session_messages', {
+                        agent_id: cliChatSession!.agentId,
+                        session_key: cliChatSession!.sessionId,
+                        mode,
+                        url,
+                        token,
+                      }) as ChatMessage[]
+                      setCliChatMessages(msgs.slice(-20))
+                    } catch (e) {
+                      console.error('send message error:', e)
+                    } finally {
+                      setCliChatLoading(false)
+                    }
+                  }
+                }}
+                placeholder={t('mini.inputPlaceholder', '输入命令或消息...')}
+                className="flex-1 bg-[#2a2a2a] border border-white/10 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:border-white/30"
+              />
+              <button
+                onClick={async () => {
+                  if (!cliChatInput.trim()) return
+                  const inputMsg = cliChatInput.trim()
+                  setCliChatInput('')
+                  setCliChatLoading(true)
+                  setCliChatMessages((prev) => [...prev, { role: 'user', text: inputMsg }])
+                  try {
+                    const agentConn = connections.find((c) => c.id === cliChatSession!.agentId)
+                    const mode = agentConn?.type === 'api' ? 'remote' : undefined
+                    const url = agentConn?.type === 'api' ? agentConn.url : undefined
+                    const token = agentConn?.type === 'api' ? agentConn.token : undefined
+                    await invoke('send_chat_message', {
+                      agent_id: cliChatSession!.agentId,
+                      message: inputMsg,
+                      mode,
+                      url,
+                      token,
+                    })
+                    const msgs = await invoke('get_session_messages', {
+                      agent_id: cliChatSession!.agentId,
+                      session_key: cliChatSession!.sessionId,
+                      mode,
+                      url,
+                      token,
+                    }) as ChatMessage[]
+                    setCliChatMessages(msgs.slice(-20))
+                  } catch (e) {
+                    console.error('send message error:', e)
+                  } finally {
+                    setCliChatLoading(false)
+                  }
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm transition-colors"
+              >
+                {t('mini.send', '发送')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

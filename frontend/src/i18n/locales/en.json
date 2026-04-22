@@ -55,7 +55,10 @@
     "other": "Other",
     "createChar": "Create character",
     "ipGenshin": "Genshin Impact",
-    "ipUmaMusume": "Uma Musume"
+    "ipUmaMusume": "Uma Musume",
+    "sessionChat": "Session Chat",
+    "inputPlaceholder": "Enter command or message...",
+    "send": "Send"
   },
 
   "charNames": {
