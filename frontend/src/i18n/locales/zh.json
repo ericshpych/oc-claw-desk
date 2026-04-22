@@ -217,7 +217,9 @@
     "gifFormat": "支持 GIF 格式，最大 5MB",
     "autoSelect": "自动选择",
     "charNameExists": "角色名已存在，桌宠动画将追加到该角色",
-    "saveFailed": "保存失败:"
+    "saveFailed": "保存失败:",
+    "largeActions": "大看板娘动画",
+    "videoFormat": "支持 MOV/MP4/WebM/GIF 格式"
   },
 
   "createChar": {

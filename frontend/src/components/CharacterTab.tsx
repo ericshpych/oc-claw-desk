@@ -5,6 +5,8 @@ import { ChevronDown, Edit2, X, UploadCloud, Check } from 'lucide-react'
 import type { CharacterMeta, AgentInfo } from '../lib/types'
 import { getStore, loadCharacters, saveCharacters, getActiveCharacter, setActiveCharacter, fileToDataUrl, MINI_CATEGORIES, CUSTOM_ASSET_PREFIX, DEFAULT_CHAR_NAME, loadOcConnections } from '../lib/store'
 
+type LargePetAction = 'work' | 'rest' | 'question' | 'grasp' | 'shy' | 'angry'
+
 export function CharacterTab({ activeTab }: { activeTab: 'pet' | 'mini' }) {
   const { t } = useTranslation()
   const [characters, setCharacters] = useState<CharacterMeta[]>([])
@@ -22,6 +24,11 @@ export function CharacterTab({ activeTab }: { activeTab: 'pet' | 'mini' }) {
   const [saving, setSaving] = useState(false)
   const workInputRef = useRef<HTMLInputElement>(null)
   const restInputRef = useRef<HTMLInputElement>(null)
+
+  // Large action video upload state
+  const [largeFiles, setLargeFiles] = useState<{ action: string; file: File }[]>([])
+  const [largePreviews, setLargePreviews] = useState<{ action: string; url: string }[]>([])
+  const largeInputRef = useRef<HTMLInputElement>(null)
 
   // Mini upload state
   const [miniCharName, setMiniCharName] = useState('')
@@ -138,6 +145,50 @@ export function CharacterTab({ activeTab }: { activeTab: 'pet' | 'mini' }) {
     setRestPreviews(await Promise.all(arr.map(fileToDataUrl)))
   }
 
+  const LARGE_ACTIONS: LargePetAction[] = ['work', 'rest', 'question', 'grasp', 'shy', 'angry']
+
+  const handleLargeFiles = async (files: FileList | null) => {
+    if (!files) return
+    const validExts = ['.mov', '.mp4', '.webm', '.gif']
+    const arr = Array.from(files).filter((f) => validExts.some(ext => f.name.toLowerCase().endsWith(ext)))
+    const actionMap: Record<string, File[]> = {}
+    for (const f of arr) {
+      const name = f.name.toLowerCase()
+      const action = LARGE_ACTIONS.find(a => name.includes(a)) || 'work'
+      if (!actionMap[action]) actionMap[action] = []
+      actionMap[action].push(f)
+    }
+    const newEntries: { action: string; file: File }[] = []
+    const newPreviews: { action: string; url: string }[] = []
+    for (const [action, fileList] of Object.entries(actionMap)) {
+      const firstFile = fileList[0]
+      newEntries.push({ action, file: firstFile })
+      const url = await fileToDataUrl(firstFile)
+      newPreviews.push({ action, url })
+    }
+    setLargeFiles([...largeFiles, ...newEntries])
+    setLargePreviews([...largePreviews, ...newPreviews])
+  }
+
+  const handleDeleteLargeActionFile = (action: string) => {
+    setLargeFiles(largeFiles.filter(f => f.action !== action))
+    setLargePreviews(largePreviews.filter(p => p.action !== action))
+  }
+
+  const handleDeleteLargeAction = async (charName: string, action: string, url: string) => {
+    const char = characters.find((c) => c.name === charName)
+    if (!char || !char.largeActions) return
+    const newActions = { ...char.largeActions }
+    delete newActions[action]
+    const updated = characters.map((c) =>
+      c.name === charName ? { ...c, largeActions: Object.keys(newActions).length > 0 ? newActions : undefined } : c
+    )
+    await saveCharacters(updated)
+    setCharacters(updated)
+    const fileName = url.split('/').pop() || ''
+    try { await invoke('delete_character_gif', { charName, subfolder: 'large', fileName }) } catch { /* ignore */ }
+  }
+
   const handlePetUpload = async () => {
     const name = newName.trim()
     if (!name || workFiles.length === 0 || restFiles.length === 0) return
@@ -159,15 +210,23 @@ export function CharacterTab({ activeTab }: { activeTab: 'pet' | 'mini' }) {
         await invoke('save_character_gif', { charName: name, fileName: f.name, subfolder: 'pet/rest', dataUrl: data })
         restPaths.push(`${CUSTOM_ASSET_PREFIX}/${name}/pet/rest/${f.name}`)
       }
+      // Save large action videos
+      const largeActions: Record<string, string> = existing?.largeActions ? { ...existing.largeActions } : {}
+      for (const { action, file } of largeFiles) {
+        const data = await fileToDataUrl(file)
+        await invoke('save_character_gif', { charName: name, fileName: file.name, subfolder: 'large', dataUrl: data })
+        largeActions[action] = `${CUSTOM_ASSET_PREFIX}/${name}/large/${file.name}`
+      }
       let updated: CharacterMeta[]
       if (existing) {
-        updated = characters.map((c) => (c.name === name ? { ...c, workGifs: workPaths, restGifs: restPaths } : c))
+        updated = characters.map((c) => (c.name === name ? { ...c, workGifs: workPaths, restGifs: restPaths, largeActions } : c))
       } else {
-        updated = [...characters, { name, workGifs: workPaths, restGifs: restPaths }]
+        updated = [...characters, { name, workGifs: workPaths, restGifs: restPaths, largeActions }]
       }
       await saveCharacters(updated)
       setCharacters(updated)
       setNewName(''); setWorkFiles([]); setRestFiles([]); setWorkPreviews([]); setRestPreviews([])
+      setLargeFiles([]); setLargePreviews([])
     } catch (e: any) { alert(t('character.saveFailed') + ' ' + String(e)) }
     setSaving(false)
   }
@@ -241,6 +300,7 @@ export function CharacterTab({ activeTab }: { activeTab: 'pet' | 'mini' }) {
                   onSelect={() => handleSelect(c.name)}
                   onDelete={() => handleDelete(c.name)}
                   onDeleteGif={handleDeletePetGif}
+                  onDeleteLargeAction={handleDeleteLargeAction}
                 />
               ))}
             </div>
@@ -265,6 +325,17 @@ export function CharacterTab({ activeTab }: { activeTab: 'pet' | 'mini' }) {
                 <div className="grid grid-cols-2 gap-6">
                   <UploadZone label={t('character.workGif')} inputRef={workInputRef} previews={workPreviews} onFiles={handleWorkFiles} />
                   <UploadZone label={t('character.restGif')} inputRef={restInputRef} previews={restPreviews} onFiles={handleRestFiles} />
+                </div>
+
+                {/* Large Actions Upload */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">{t('character.largeActions')}</label>
+                  <input ref={largeInputRef} type="file" accept=".mov,.mp4,.webm,.gif" multiple className="hidden" onChange={(e) => handleLargeFiles(e.target.files)} />
+                  <LargeUploadZone
+                    previews={largePreviews}
+                    onClick={() => largeInputRef.current?.click()}
+                    onRemove={handleDeleteLargeActionFile}
+                  />
                 </div>
 
                 <div className="pt-2">
@@ -303,13 +374,14 @@ export function CharacterTab({ activeTab }: { activeTab: 'pet' | 'mini' }) {
 // ─── Pet Character Card ───
 
 function PetCharacterCard({
-  character, isActive, onSelect, onDelete, onDeleteGif
+  character, isActive, onSelect, onDelete, onDeleteGif, onDeleteLargeAction
 }: {
   character: CharacterMeta
   isActive: boolean
   onSelect: () => void
   onDelete: () => void
   onDeleteGif: (charName: string, category: 'rest' | 'crawl', gifPath: string) => void
+  onDeleteLargeAction: (charName: string, action: string, url: string) => void
 }) {
   const { t } = useTranslation()
   const [isEditing, setIsEditing] = useState(false)
@@ -360,6 +432,16 @@ function PetCharacterCard({
         {character.workGifs.length === 0 && character.restGifs.length === 0 && (
           <div className="text-sm text-gray-400 text-center py-4">{t('character.noImages')}</div>
         )}
+
+        {/* Large Actions */}
+        {character.largeActions && Object.keys(character.largeActions).length > 0 && (
+          <LargeStateGroup
+            title={t('character.largeActions')}
+            actions={character.largeActions}
+            isEditing={isEditing}
+            onDelete={(action) => onDeleteLargeAction(character.name, action, character.largeActions![action])}
+          />
+        )}
       </div>
     </div>
   )
@@ -389,6 +471,53 @@ function StateGroup({ title, gifs, isEditing, onDelete }: {
             {isEditing && (
               <button
                 onClick={(e) => { e.stopPropagation(); onDelete(g) }}
+                className="absolute -top-2 -right-2 bg-red-500 text-white border-2 border-white hover:bg-red-600 rounded-full p-0.5 shadow-sm z-10 transition-transform hover:scale-110"
+                title={t('common.delete')}
+              >
+                <X size={12} strokeWidth={3} />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── Large State Group (for Pet large actions) ───
+
+function LargeStateGroup({ title, actions, isEditing, onDelete }: {
+  title: string
+  actions: Record<string, string>
+  isEditing: boolean
+  onDelete: (action: string) => void
+}) {
+  const { t } = useTranslation()
+  const entries = Object.entries(actions)
+  if (entries.length === 0) return null
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <h4 className="text-sm font-medium text-gray-700">{title}</h4>
+        <span className="text-[11px] font-medium bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-md">{entries.length}</span>
+      </div>
+      <div className="flex flex-wrap gap-4">
+        {entries.map(([action, url]) => (
+          <div key={action} className="relative group">
+            <div className={`w-20 h-20 rounded-xl border flex items-center justify-center overflow-hidden transition-colors ${
+              isEditing ? 'border-red-200 bg-red-50/30' : 'border-gray-200 bg-gray-50 group-hover:border-gray-300'
+            }`}>
+              {url.endsWith('.mov') || url.endsWith('.mp4') || url.endsWith('.webm') ? (
+                <video src={url} className="w-full h-full object-contain" muted loop />
+              ) : (
+                <img src={url} alt="" className="w-full h-full object-contain" draggable={false} />
+              )}
+            </div>
+            <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] text-center py-0.5 capitalize">{action}</div>
+            {isEditing && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onDelete(action) }}
                 className="absolute -top-2 -right-2 bg-red-500 text-white border-2 border-white hover:bg-red-600 rounded-full p-0.5 shadow-sm z-10 transition-transform hover:scale-110"
                 title={t('common.delete')}
               >
@@ -685,6 +814,56 @@ function UploadZoneSimple({ label, onClick, previews }: {
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── Large Upload Zone (for pet large actions) ───
+
+function LargeUploadZone({ previews, onClick, onRemove }: {
+  previews: { action: string; url: string }[]
+  onClick: () => void
+  onRemove: (action: string) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div
+      onClick={onClick}
+      className="border-2 border-dashed border-gray-200 rounded-xl p-6 flex flex-col items-center justify-center bg-gray-50/50 hover:bg-gray-50 transition-colors cursor-pointer group min-h-[100px]"
+    >
+      {previews.length > 0 ? (
+        <div className="flex flex-wrap gap-4 justify-center">
+          {previews.map((p) => (
+            <div key={p.action} className="relative">
+              <div className="w-16 h-16 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
+                {p.url.endsWith('.mov') || p.url.endsWith('.mp4') || p.url.endsWith('.webm') ? (
+                  <video src={p.url} className="w-full h-full object-contain" muted loop />
+                ) : (
+                  <img src={p.url} alt="" className="w-full h-full object-contain" />
+                )}
+              </div>
+              <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] text-center py-0.5 capitalize">{p.action}</div>
+              <button
+                onClick={(e) => { e.stopPropagation(); onRemove(p.action) }}
+                className="absolute -top-2 -right-2 bg-red-500 text-white border-2 border-white hover:bg-red-600 rounded-full p-0.5 shadow-sm z-10 transition-transform hover:scale-110"
+              >
+                <X size={10} strokeWidth={3} />
+              </button>
+            </div>
+          ))}
+          <div className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 group-hover:border-gray-300 group-hover:text-gray-500 transition-colors">
+            <UploadCloud size={20} />
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="p-2 bg-white rounded-full shadow-sm border border-gray-100 mb-2 group-hover:scale-105 transition-transform">
+            <UploadCloud size={18} className="text-gray-400 group-hover:text-gray-600" />
+          </div>
+          <span className="text-sm text-gray-600 font-medium">{t('character.clickOrDrag')}</span>
+          <span className="text-xs text-gray-400 mt-1">{t('character.videoFormat')}</span>
+        </>
+      )}
     </div>
   )
 }

@@ -217,7 +217,9 @@
     "gifFormat": "GIF format supported, max 5MB",
     "autoSelect": "Auto Select",
     "charNameExists": "Character name already exists. Pet animation will be appended.",
-    "saveFailed": "Save failed:"
+    "saveFailed": "Save failed:",
+    "largeActions": "Large Mascot Animation",
+    "videoFormat": "Supports MOV/MP4/WebM/GIF format"
   },
 
   "createChar": {
